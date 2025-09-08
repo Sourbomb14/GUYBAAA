@@ -1,0 +1,16 @@
+streamlit
+pandas
+numpy
+matplotlib
+seaborn
+plotly
+scikit-learn
+openai
+requests
+email-validator
+python-dotenv
+altair
+streamlit-option-menu
+streamlit-chat
+pillow
+openpyxl
