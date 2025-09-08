@@ -1,587 +1,292 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Optional, Any, Tuple
-import plotly.express as px
-import plotly.graph_objects as go
-from datetime import datetime, timedelta
-import logging
+from typing import Dict, List, Optional, Any
+import requests
 import json
-import random
+from datetime import datetime
 
 class UIHelper:
     """UI helper functions for consistent styling and components"""
-    
-    def __init__(self):
-        self.logger = logging.getLogger(__name__)
     
     def render_metric_cards(self):
         """Render metric cards for the dashboard"""
         if st.session_state.campaign_data is not None:
             data = st.session_state.campaign_data
-            
             col1, col2, col3, col4 = st.columns(4)
             
             with col1:
-                st.markdown("""
+                st.markdown(f"""
                 <div class="metric-card">
                     <h3 style="color: #667eea; margin: 0;">📊 Total Campaigns</h3>
-                    <p style="font-size: 2rem; font-weight: bold; margin: 10px 0; color: #e2e8f0;">{}</p>
+                    <p style="font-size: 2rem; font-weight: bold; margin: 10px 0; color: #e2e8f0;">{len(data)}</p>
                     <p style="color: #a0aec0; margin: 0;">Active campaigns</p>
                 </div>
-                """.format(len(data)), unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
             
             with col2:
                 total_spend = data['spend'].sum() if 'spend' in data.columns else 0
-                st.markdown("""
+                st.markdown(f"""
                 <div class="metric-card">
                     <h3 style="color: #667eea; margin: 0;">💰 Total Spend</h3>
-                    <p style="font-size: 2rem; font-weight: bold; margin: 10px 0; color: #e2e8f0;">${:,.0f}</p>
+                    <p style="font-size: 2rem; font-weight: bold; margin: 10px 0; color: #e2e8f0;">${total_spend:,.0f}</p>
                     <p style="color: #a0aec0; margin: 0;">Campaign investment</p>
                 </div>
-                """.format(total_spend), unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
             
             with col3:
                 avg_roi = data['roi'].mean() if 'roi' in data.columns else 0
                 roi_color = "#10b981" if avg_roi > 0 else "#ef4444"
-                st.markdown("""
+                st.markdown(f"""
                 <div class="metric-card">
                     <h3 style="color: #667eea; margin: 0;">📈 Average ROI</h3>
-                    <p style="font-size: 2rem; font-weight: bold; margin: 10px 0; color: {};">{:.1f}%</p>
+                    <p style="font-size: 2rem; font-weight: bold; margin: 10px 0; color: {roi_color};">{avg_roi:.1f}%</p>
                     <p style="color: #a0aec0; margin: 0;">Return on investment</p>
                 </div>
-                """.format(roi_color, avg_roi), unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
             
             with col4:
                 total_impressions = data['impressions'].sum() if 'impressions' in data.columns else 0
-                st.markdown("""
+                st.markdown(f"""
                 <div class="metric-card">
                     <h3 style="color: #667eea; margin: 0;">👁️ Total Impressions</h3>
-                    <p style="font-size: 2rem; font-weight: bold; margin: 10px 0; color: #e2e8f0;">{:,.0f}</p>
+                    <p style="font-size: 2rem; font-weight: bold; margin: 10px 0; color: #e2e8f0;">{total_impressions:,.0f}</p>
                     <p style="color: #a0aec0; margin: 0;">Total reach</p>
                 </div>
-                """.format(total_impressions), unsafe_allow_html=True)
-    
-    def create_status_badge(self, status: str) -> str:
-        """Create colored status badge"""
-        status_colors = {
-            'active': '#10b981',
-            'paused': '#f59e0b',
-            'completed': '#6b7280',
-            'draft': '#3b82f6'
-        }
-        
-        color = status_colors.get(status.lower(), '#6b7280')
-        return f"""
-        <span style="background-color: {color}; color: white; padding: 2px 8px; 
-                     border-radius: 12px; font-size: 0.75rem; font-weight: bold;">
-            {status.upper()}
-        </span>
-        """
-    
-    def create_progress_bar(self, value: float, max_value: float, color: str = "#667eea") -> str:
-        """Create custom progress bar"""
-        percentage = min((value / max_value) * 100, 100)
-        return f"""
-        <div style="background-color: rgba(102, 126, 234, 0.2); border-radius: 10px; height: 8px; margin: 5px 0;">
-            <div style="background-color: {color}; height: 100%; border-radius: 10px; width: {percentage}%;"></div>
-        </div>
-        """
-    
-    def format_currency(self, value: float) -> str:
-        """Format currency values"""
-        if abs(value) >= 1_000_000:
-            return f"${value/1_000_000:.1f}M"
-        elif abs(value) >= 1_000:
-            return f"${value/1_000:.1f}K"
-        else:
-            return f"${value:.2f}"
-    
-    def format_large_number(self, value: float) -> str:
-        """Format large numbers"""
-        if abs(value) >= 1_000_000:
-            return f"{value/1_000_000:.1f}M"
-        elif abs(value) >= 1_000:
-            return f"{value/1_000:.1f}K"
-        else:
-            return f"{value:.0f}"
+                """, unsafe_allow_html=True)
 
 class CampaignOptimizer:
-    """AI-powered campaign optimization and suggestions"""
+    """AI-powered campaign optimization using Groq"""
     
-    def __init__(self):
-        self.logger = logging.getLogger(__name__)
+    def __init__(self, groq_api_key: str):
+        self.groq_api_key = groq_api_key
+        self.base_url = "https://api.groq.com/openai/v1"
     
     def get_ai_response(self, user_input: str, campaign_data: Optional[pd.DataFrame] = None) -> str:
-        """Generate AI response based on user input and campaign data"""
-        # This is a simplified AI response system
-        # In production, you would integrate with OpenAI GPT or similar
+        """Generate AI response using Groq API"""
+        if not self.groq_api_key:
+            return self._get_fallback_response(user_input, campaign_data)
         
-        user_input_lower = user_input.lower()
-        
-        # Analyze user intent
-        if any(word in user_input_lower for word in ['roi', 'return', 'profit']):
-            return self.analyze_roi_query(campaign_data)
-        
-        elif any(word in user_input_lower for word in ['budget', 'spend', 'cost']):
-            return self.analyze_budget_query(campaign_data)
-        
-        elif any(word in user_input_lower for word in ['channel', 'platform']):
-            return self.analyze_channel_query(campaign_data)
-        
-        elif any(word in user_input_lower for word in ['optimize', 'improve', 'better']):
-            return self.provide_optimization_suggestions(campaign_data)
-        
-        elif any(word in user_input_lower for word in ['trend', 'performance', 'analytics']):
-            return self.analyze_performance_trends(campaign_data)
-        
-        else:
-            return self.provide_general_insights(campaign_data)
-    
-    def analyze_roi_query(self, data: Optional[pd.DataFrame]) -> str:
-        """Analyze ROI-related queries"""
-        if data is None or 'roi' not in data.columns:
-            return """
-            🔍 **ROI Analysis**
+        try:
+            # Prepare context from campaign data
+            context = self._prepare_context(campaign_data)
             
-            I'd love to help you analyze ROI, but I need campaign data first. Please upload your campaign dataset in the Data Upload section.
-            
-            Once you have data uploaded, I can provide insights on:
-            • Best performing campaigns by ROI
-            • ROI trends over time
-            • Channel-specific ROI analysis
-            • Optimization recommendations
+            # Create prompt
+            prompt = f"""
+            You are a marketing analytics expert. Based on the following campaign data context and user question, provide helpful insights and recommendations.
+
+            Campaign Data Context:
+            {context}
+
+            User Question: {user_input}
+
+            Please provide a comprehensive, actionable response with specific insights and recommendations.
             """
-        
-        avg_roi = data['roi'].mean()
-        best_roi = data['roi'].max()
-        worst_roi = data['roi'].min()
-        positive_campaigns = (data['roi'] > 0).sum()
-        total_campaigns = len(data)
-        
-        # Find best performing channel
-        if 'channel' in data.columns:
-            channel_roi = data.groupby('channel')['roi'].mean().sort_values(ascending=False)
-            best_channel = channel_roi.index[0]
-            best_channel_roi = channel_roi.iloc[0]
-        else:
-            best_channel = "N/A"
-            best_channel_roi = 0
-        
-        return f"""
-        📊 **ROI Analysis Results**
-        
-        **Overall Performance:**
-        • Average ROI: {avg_roi:.2f}%
-        • Best Campaign ROI: {best_roi:.2f}%
-        • Worst Campaign ROI: {worst_roi:.2f}%
-        • Profitable Campaigns: {positive_campaigns}/{total_campaigns} ({(positive_campaigns/total_campaigns)*100:.1f}%)
-        
-        **Top Performing Channel:**
-        • {best_channel}: {best_channel_roi:.2f}% average ROI
-        
-        **Recommendations:**
-        {'✅ Great job! Your average ROI is positive.' if avg_roi > 0 else '⚠️ Consider optimizing campaigns - negative average ROI detected.'}
-        {'🎯 Focus more budget on ' + best_channel + ' campaigns.' if best_channel != 'N/A' else ''}
-        💡 Consider A/B testing top performers to scale success.
-        """
+            
+            headers = {
+                "Authorization": f"Bearer {self.groq_api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "model": "llama3-8b-8192",
+                "messages": [
+                    {"role": "system", "content": "You are an expert marketing analytics consultant."},
+                    {"role": "user", "content": prompt}
+                ],
+                "max_tokens": 1024,
+                "temperature": 0.7
+            }
+            
+            response = requests.post(
+                f"{self.base_url}/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result['choices'][0]['message']['content']
+            else:
+                return f"API Error: {response.status_code} - {response.text}"
+                
+        except Exception as e:
+            return f"Error generating AI response: {str(e)}"
     
-    def analyze_budget_query(self, data: Optional[pd.DataFrame]) -> str:
-        """Analyze budget-related queries"""
+    def _prepare_context(self, data: Optional[pd.DataFrame]) -> str:
+        """Prepare campaign data context for AI"""
         if data is None:
-            return """
-            💰 **Budget Analysis**
-            
-            Upload your campaign data to get detailed budget insights including:
-            • Spend efficiency analysis
-            • Budget allocation recommendations
-            • Cost per acquisition optimization
-            • Channel-wise budget performance
-            """
+            return "No campaign data available."
         
-        total_budget = data['budget'].sum() if 'budget' in data.columns else 0
-        total_spend = data['spend'].sum() if 'spend' in data.columns else 0
-        budget_utilization = (total_spend / total_budget * 100) if total_budget > 0 else 0
+        context_parts = []
         
-        avg_budget = data['budget'].mean() if 'budget' in data.columns else 0
-        avg_spend = data['spend'].mean() if 'spend' in data.columns else 0
-        
-        return f"""
-        💰 **Budget Analysis**
-        
-        **Budget Overview:**
-        • Total Budget Allocated: ${total_budget:,.2f}
-        • Total Amount Spent: ${total_spend:,.2f}
-        • Budget Utilization: {budget_utilization:.1f}%
-        • Average Campaign Budget: ${avg_budget:,.2f}
-        • Average Campaign Spend: ${avg_spend:,.2f}
-        
-        **Budget Efficiency:**
-        {'🟢 Good budget management - spending within limits' if budget_utilization <= 100 else '🔴 Budget exceeded - review spend controls'}
-        
-        **Recommendations:**
-        • {'Increase budget for high-ROI campaigns' if 'roi' in data.columns and data['roi'].mean() > 15 else 'Focus on cost optimization'}
-        • Consider reallocating budget from underperforming campaigns
-        • Set up automated budget alerts for better control
-        """
-    
-    def analyze_channel_query(self, data: Optional[pd.DataFrame]) -> str:
-        """Analyze channel-related queries"""
-        if data is None or 'channel' not in data.columns:
-            return """
-            📺 **Channel Analysis**
-            
-            Upload campaign data with channel information to get insights on:
-            • Best performing marketing channels
-            • Channel-specific ROI and engagement
-            • Budget allocation by channel
-            • Cross-channel optimization opportunities
-            """
-        
-        channel_performance = data.groupby('channel').agg({
-            'roi': 'mean',
-            'spend': 'sum',
-            'budget': 'sum'
-        }).round(2)
-        
-        # Sort by ROI
-        channel_performance = channel_performance.sort_values('roi', ascending=False)
-        
-        best_channel = channel_performance.index[0]
-        worst_channel = channel_performance.index[-1]
-        
-        return f"""
-        📺 **Channel Performance Analysis**
-        
-        **Channel Rankings (by ROI):**
-        {self._format_channel_rankings(channel_performance)}
-        
-        **Key Insights:**
-        🥇 **Best Performer:** {best_channel} ({channel_performance.loc[best_channel, 'roi']:.2f}% ROI)
-        📉 **Needs Attention:** {worst_channel} ({channel_performance.loc[worst_channel, 'roi']:.2f}% ROI)
-        
-        **Recommendations:**
-        • Increase budget allocation to {best_channel}
-        • Investigate why {worst_channel} is underperforming
-        • Consider cross-channel attribution analysis
-        • Test new creative formats on top channels
-        """
-    
-    def _format_channel_rankings(self, channel_performance: pd.DataFrame) -> str:
-        """Format channel rankings for display"""
-        rankings = []
-        for i, (channel, row) in enumerate(channel_performance.iterrows()):
-            emoji = ["🥇", "🥈", "🥉", "🏅", "📊"][min(i, 4)]
-            rankings.append(f"{emoji} {channel}: {row['roi']:.2f}% ROI, ${row['spend']:,.0f} spend")
-        
-        return '\n'.join(rankings[:5])  # Show top 5
-    
-    def provide_optimization_suggestions(self, data: Optional[pd.DataFrame]) -> str:
-        """Provide campaign optimization suggestions"""
-        if data is None:
-            return """
-            🚀 **Optimization Suggestions**
-            
-            Upload your campaign data to get personalized optimization recommendations:
-            • Performance improvement opportunities
-            • Budget reallocation suggestions
-            • Channel optimization strategies
-            • Creative and targeting recommendations
-            """
-        
-        suggestions = []
-        
-        # ROI-based suggestions
-        if 'roi' in data.columns:
-            avg_roi = data['roi'].mean()
-            if avg_roi < 10:
-                suggestions.append("🎯 **Target Optimization:** Review audience targeting - low ROI suggests poor fit")
-            elif avg_roi > 50:
-                suggestions.append("📈 **Scale Success:** Consider increasing budget for high-ROI campaigns")
-        
-        # Budget efficiency
-        if 'budget' in data.columns and 'spend' in data.columns:
-            underutilized = data[data['spend'] < data['budget'] * 0.8]
-            if len(underutilized) > 0:
-                suggestions.append(f"💰 **Budget Reallocation:** {len(underutilized)} campaigns are under-utilizing budget")
-        
-        # Channel diversity
-        if 'channel' in data.columns:
-            channel_count = data['channel'].nunique()
-            if channel_count < 3:
-                suggestions.append("📺 **Channel Diversification:** Consider expanding to more marketing channels")
-        
-        # Engagement optimization
-        if 'engagement_rate' in data.columns:
-            low_engagement = data[data['engagement_rate'] < 2]
-            if len(low_engagement) > 0:
-                suggestions.append("🎨 **Creative Refresh:** Low engagement rates suggest need for new creatives")
-        
-        if not suggestions:
-            suggestions = [
-                "✅ **Overall Performance:** Your campaigns are performing well!",
-                "📊 **Continuous Testing:** Consider A/B testing to further optimize",
-                "🔍 **Deep Dive Analytics:** Look into user journey analysis"
-            ]
-        
-        return f"""
-        🚀 **Campaign Optimization Recommendations**
-        
-        Based on your campaign data analysis:
-        
-        {chr(10).join(suggestions)}
-        
-        **Next Steps:**
-        1. Prioritize high-impact optimizations first
-        2. Set up proper tracking and measurement
-        3. Test changes on small budget allocations initially
-        4. Monitor performance changes closely
-        """
-    
-    def analyze_performance_trends(self, data: Optional[pd.DataFrame]) -> str:
-        """Analyze performance trends"""
-        if data is None:
-            return """
-            📈 **Performance Trends Analysis**
-            
-            Upload your campaign data to see:
-            • Performance trends over time
-            • Seasonal patterns and insights
-            • Growth opportunities
-            • Predictive recommendations
-            """
-        
-        # Calculate basic trend metrics
-        numeric_cols = ['roi', 'engagement_rate', 'spend', 'revenue']
-        available_metrics = [col for col in numeric_cols if col in data.columns]
-        
-        trends = {}
-        for metric in available_metrics:
-            values = data[metric].dropna()
-            if len(values) > 1:
-                # Simple trend calculation (slope)
-                x = np.arange(len(values))
-                slope = np.polyfit(x, values, 1)[0]
-                trends[metric] = slope
-        
-        return f"""
-        📈 **Performance Trends Analysis**
-        
-        **Trend Summary:**
-        {self._format_trends(trends)}
-        
-        **Key Insights:**
-        • Campaign count: {len(data)} total campaigns
-        • Performance stability: {'Consistent' if len(trends) > 0 else 'Variable'}
-        • Optimization opportunity: {'High' if any(v < 0 for v in trends.values()) else 'Moderate'}
-        
-        **Recommendations:**
-        • Monitor declining trends closely
-        • Capitalize on improving metrics
-        • Set up automated trend alerts
-        • Consider seasonal adjustments
-        """
-    
-    def _format_trends(self, trends: Dict[str, float]) -> str:
-        """Format trends for display"""
-        if not trends:
-            return "• Insufficient data for trend analysis"
-        
-        formatted = []
-        for metric, slope in trends.items():
-            direction = "📈 Improving" if slope > 0 else "📉 Declining" if slope < 0 else "➡️ Stable"
-            formatted.append(f"• {metric.replace('_', ' ').title()}: {direction}")
-        
-        return '\n'.join(formatted)
-    
-    def provide_general_insights(self, data: Optional[pd.DataFrame]) -> str:
-        """Provide general insights about the campaign data"""
-        if data is None:
-            return """
-            🤖 **GAIBA AI Assistant**
-            
-            Hello! I'm your AI-powered marketing assistant. I can help you with:
-            
-            📊 **Campaign Analytics:**
-            • Performance analysis and insights
-            • ROI and budget optimization
-            • Channel effectiveness review
-            
-            🎯 **Optimization:**
-            • Targeting recommendations
-            • Budget reallocation advice
-            • Creative performance insights
-            
-            💡 **Strategy:**
-            • Growth opportunities
-            • Competitive analysis
-            • Market trends
-            
-            To get started, upload your campaign data or ask me specific questions about marketing analytics!
-            """
-        
-        # Generate insights based on available data
-        insights = []
-        
-        total_campaigns = len(data)
-        insights.append(f"📊 You have {total_campaigns} campaigns in your dataset")
-        
-        if 'channel' in data.columns:
-            unique_channels = data['channel'].nunique()
-            insights.append(f"📺 Running across {unique_channels} different channels")
-        
-        if 'roi' in data.columns:
-            avg_roi = data['roi'].mean()
-            insights.append(f"💰 Average ROI is {avg_roi:.2f}%")
+        # Basic stats
+        context_parts.append(f"Total Campaigns: {len(data)}")
         
         if 'spend' in data.columns:
-            total_spend = data['spend'].sum()
-            insights.append(f"💸 Total spend: ${total_spend:,.2f}")
+            context_parts.append(f"Total Spend: ${data['spend'].sum():,.2f}")
+            context_parts.append(f"Average Spend: ${data['spend'].mean():,.2f}")
+        
+        if 'roi' in data.columns:
+            context_parts.append(f"Average ROI: {data['roi'].mean():.2f}%")
+            context_parts.append(f"Best ROI: {data['roi'].max():.2f}%")
+            context_parts.append(f"Worst ROI: {data['roi'].min():.2f}%")
+        
+        if 'channel' in data.columns:
+            channels = data['channel'].value_counts().head(3)
+            context_parts.append(f"Top Channels: {', '.join(channels.index.tolist())}")
+        
+        return "; ".join(context_parts)
+    
+    def _get_fallback_response(self, user_input: str, data: Optional[pd.DataFrame]) -> str:
+        """Fallback response when API is not available"""
+        if data is None:
+            return """
+            🤖 **AI Assistant** (Demo Mode)
+            
+            I'd love to help analyze your campaigns! Please upload your campaign data first, then I can provide insights on:
+            • Performance analysis and optimization suggestions
+            • ROI and budget recommendations  
+            • Channel effectiveness insights
+            • Campaign strategy advice
+            
+            *Note: Full AI features require API configuration in secrets.*
+            """
+        
+        # Simple analysis based on user input
+        user_lower = user_input.lower()
+        
+        if 'roi' in user_lower:
+            avg_roi = data['roi'].mean() if 'roi' in data.columns else 0
+            return f"""
+            📊 **ROI Analysis** (Demo Mode)
+            
+            Based on your {len(data)} campaigns:
+            • Average ROI: {avg_roi:.2f}%
+            • {'✅ Great performance!' if avg_roi > 20 else '⚠️ Room for improvement'}
+            
+            *Configure Groq API for detailed AI insights.*
+            """
         
         return f"""
-        🤖 **Campaign Overview**
+        🤖 **Campaign Insights** (Demo Mode)
         
-        {chr(10).join(insights)}
+        I see you have {len(data)} campaigns to analyze. For detailed AI-powered insights and recommendations, please configure the Groq API key in Streamlit secrets.
         
-        **What would you like to explore?**
-        • Ask about ROI performance: "How is my ROI looking?"
-        • Budget questions: "How efficient is my budget allocation?"
-        • Channel analysis: "Which channels perform best?"
-        • Optimization tips: "How can I improve my campaigns?"
-        
-        I'm here to help you make data-driven marketing decisions! 🚀
+        Current data overview:
+        • Total campaigns: {len(data)}
+        • Columns available: {', '.join(data.columns[:5])}{'...' if len(data.columns) > 5 else ''}
         """
     
     def generate_campaign_suggestions(self, data: Optional[pd.DataFrame]) -> str:
-        """Generate campaign suggestions based on data"""
-        if data is None:
-            return """
-            💡 **Campaign Suggestions**
-            
-            Upload your data first, then I can provide:
-            • New campaign ideas based on your best performers
-            • Budget allocation recommendations
-            • Channel expansion opportunities
-            • Audience targeting suggestions
-            """
+        """Generate campaign suggestions"""
+        if not self.groq_api_key:
+            return self._get_basic_suggestions(data)
         
-        suggestions = []
+        context = self._prepare_context(data)
+        prompt = f"""
+        Based on this campaign data: {context}
         
-        # Budget suggestions
-        if 'budget' in data.columns and 'roi' in data.columns:
-            high_roi_campaigns = data[data['roi'] > data['roi'].quantile(0.75)]
-            if len(high_roi_campaigns) > 0:
-                avg_budget = high_roi_campaigns['budget'].mean()
-                suggestions.append(f"💰 Consider campaigns with ${avg_budget:,.0f} budget (based on high-ROI patterns)")
-        
-        # Channel suggestions
-        if 'channel' in data.columns and 'roi' in data.columns:
-            best_channel = data.groupby('channel')['roi'].mean().idxmax()
-            suggestions.append(f"📺 Focus on {best_channel} campaigns (your best performing channel)")
-        
-        # Timing suggestions
-        if any(col in data.columns for col in ['date', 'start_date', 'campaign_date']):
-            suggestions.append("📅 Consider seasonal timing based on your historical data")
-        
-        return f"""
-        💡 **New Campaign Suggestions**
-        
-        Based on your performance data:
-        
-        {chr(10).join(suggestions) if suggestions else '• Upload more data for personalized suggestions'}
-        
-        **Campaign Ideas:**
-        🎯 **Lookalike Campaign:** Target similar audiences to your best performers
-        🔄 **Retargeting Campaign:** Re-engage previous campaign audiences
-        📱 **Cross-Channel Campaign:** Expand successful campaigns to new channels
-        🆕 **Product Launch Campaign:** Use proven formats for new offerings
-        
-        **Success Tips:**
-        • Start with small test budgets
-        • Use proven creative formats
-        • Monitor performance daily
-        • Scale gradually based on results
+        Please suggest 3-5 new campaign ideas with specific recommendations for:
+        - Budget allocation
+        - Target channels
+        - Expected outcomes
         """
+        
+        return self.get_ai_response(prompt, data)
+    
+    def analyze_campaign_performance(self, data: Optional[pd.DataFrame]) -> str:
+        """Analyze campaign performance"""
+        if not self.groq_api_key:
+            return self._get_basic_analysis(data)
+        
+        context = self._prepare_context(data)
+        prompt = f"""
+        Analyze the performance of these marketing campaigns: {context}
+        
+        Provide insights on:
+        - Top performing campaigns and why
+        - Areas needing improvement
+        - Optimization opportunities
+        """
+        
+        return self.get_ai_response(prompt, data)
     
     def get_optimization_tips(self, data: Optional[pd.DataFrame]) -> str:
-        """Get specific optimization tips"""
+        """Get optimization tips"""
         return """
         🔧 **Campaign Optimization Tips**
         
         **📊 Data & Analytics:**
         • Set up proper conversion tracking
-        • Use UTM parameters for attribution
         • Monitor key metrics daily
-        • Set up automated alerts
+        • Use UTM parameters for attribution
         
-        **🎯 Targeting Optimization:**
+        **🎯 Targeting:**
         • Test different audience segments
-        • Use lookalike audiences from converters
-        • Exclude poor-performing segments
-        • Adjust geographic targeting
+        • Use lookalike audiences
+        • Optimize geographic targeting
         
-        **💰 Budget Optimization:**
+        **💰 Budget:**
         • Shift budget to high-ROI campaigns
-        • Use automated bidding strategies
-        • Set appropriate daily budgets
+        • Use automated bidding
         • Monitor cost-per-acquisition
         
-        **🎨 Creative Optimization:**
+        **🎨 Creative:**
         • A/B test ad creatives regularly
-        • Use dynamic creative optimization
-        • Test different call-to-actions
         • Refresh creatives every 2-3 weeks
-        
-        **📱 Technical Optimization:**
-        • Optimize landing page speed
-        • Ensure mobile responsiveness
-        • Test different landing pages
-        • Implement proper tracking pixels
-        
-        **🚀 Advanced Tips:**
-        • Use machine learning for bidding
-        • Implement cross-device tracking
-        • Test different attribution models
-        • Consider customer lifetime value
+        • Test different call-to-actions
         """
-
-class DataProcessor:
-    """Data processing utilities"""
     
-    @staticmethod
-    def clean_numeric_columns(df: pd.DataFrame, columns: List[str]) -> pd.DataFrame:
-        """Clean numeric columns by removing non-numeric characters"""
-        df_clean = df.copy()
+    def _get_basic_suggestions(self, data: Optional[pd.DataFrame]) -> str:
+        """Basic suggestions without AI"""
+        if data is None:
+            return "Upload campaign data to get personalized suggestions."
         
-        for col in columns:
-            if col in df_clean.columns:
-                # Remove currency symbols and commas
-                df_clean[col] = df_clean[col].astype(str).str.replace(r'[$,]', '', regex=True)
-                # Convert to numeric
-                df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce')
+        suggestions = []
+        if 'channel' in data.columns and 'roi' in data.columns:
+            best_channel = data.groupby('channel')['roi'].mean().idxmax()
+            suggestions.append(f"• Focus more budget on {best_channel} (your best performing channel)")
         
-        return df_clean
+        if 'roi' in data.columns:
+            high_roi_count = (data['roi'] > data['roi'].mean()).sum()
+            suggestions.append(f"• Scale up {high_roi_count} campaigns performing above average")
+        
+        return f"""
+        💡 **Campaign Suggestions**
+        
+        {chr(10).join(suggestions) if suggestions else '• Upload more detailed data for specific recommendations'}
+        
+        **General Recommendations:**
+        • Test new audience segments
+        • Optimize landing pages
+        • Consider seasonal timing
+        • Implement A/B testing
+        """
     
-    @staticmethod
-    def calculate_derived_metrics(df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate derived marketing metrics"""
-        df_derived = df.copy()
+    def _get_basic_analysis(self, data: Optional[pd.DataFrame]) -> str:
+        """Basic analysis without AI"""
+        if data is None:
+            return "Upload campaign data for performance analysis."
         
-        # ROI calculation
-        if 'revenue' in df.columns and 'spend' in df.columns:
-            df_derived['roi'] = ((df_derived['revenue'] - df_derived['spend']) / df_derived['spend'] * 100).round(2)
+        analysis = []
+        if 'roi' in data.columns:
+            avg_roi = data['roi'].mean()
+            analysis.append(f"• Average ROI: {avg_roi:.2f}%")
+            analysis.append(f"• {'Strong performance' if avg_roi > 15 else 'Needs optimization'}")
         
-        # CTR calculation
-        if 'clicks' in df.columns and 'impressions' in df.columns:
-            df_derived['ctr'] = (df_derived['clicks'] / df_derived['impressions'] * 100).round(4)
+        if 'spend' in data.columns:
+            total_spend = data['spend'].sum()
+            analysis.append(f"• Total investment: ${total_spend:,.2f}")
         
-        # CPA calculation
-        if 'spend' in df.columns and 'conversions' in df.columns:
-            df_derived['cpa'] = (df_derived['spend'] / df_derived['conversions']).round(2)
-            df_derived['cpa'] = df_derived['cpa'].replace([np.inf, -np.inf], np.nan)
+        return f"""
+        📊 **Performance Analysis**
         
-        # ROAS calculation
-        if 'revenue' in df.columns and 'spend' in df.columns:
-            df_derived['roas'] = (df_derived['revenue'] / df_derived['spend']).round(2)
+        {chr(10).join(analysis)}
         
-        return df_derived
+        **Key Insights:**
+        • {len(data)} total campaigns analyzed
+        • Performance varies across channels
+        • Optimization opportunities available
+        """
