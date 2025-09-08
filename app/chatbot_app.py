@@ -7,19 +7,33 @@ import os
 import sys
 from datetime import datetime, timedelta
 import numpy as np
-import json
 
-# Add the app directory to Python path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# Add current directory to Python path for imports
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
 
-# Import custom modules with proper error handling
+# Now import custom modules
 try:
+    import data_loading
+    import marketing_analysis
+    import email_utils
+    import utils
+    
     from data_loading import DataLoader
     from marketing_analysis import MarketingAnalyzer
     from email_utils import EmailManager
     from utils import UIHelper, CampaignOptimizer
 except ImportError as e:
-    st.error(f"Import error: {e}")
+    st.error(f"""
+    **Import Error**: {e}
+    
+    Please ensure all required files are present:
+    - data_loading.py
+    - marketing_analysis.py 
+    - email_utils.py
+    - utils.py
+    """)
     st.stop()
 
 # Page config
@@ -31,6 +45,7 @@ st.set_page_config(
 )
 
 # Load API keys from Streamlit secrets
+@st.cache_data
 def load_api_keys():
     """Load API keys from Streamlit secrets"""
     try:
@@ -41,8 +56,7 @@ def load_api_keys():
             'smtp_server': st.secrets.get("SMTP_SERVER", "smtp.gmail.com"),
             'smtp_port': st.secrets.get("SMTP_PORT", 587)
         }
-    except Exception as e:
-        st.warning(f"Could not load secrets: {e}")
+    except Exception:
         return {}
 
 # Custom CSS for dark theme
@@ -55,11 +69,6 @@ st.markdown("""
         background: linear-gradient(135deg, #16213e 0%, #0f3460 100%);
         padding: 1.5rem; border-radius: 15px; border: 1px solid #2d3748;
         box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3); margin: 1rem 0;
-    }
-    
-    .chat-container {
-        background: rgba(22, 33, 62, 0.8); border-radius: 15px;
-        padding: 1.5rem; border: 1px solid #2d3748; backdrop-filter: blur(10px);
     }
     
     .stButton > button {
@@ -94,12 +103,15 @@ class GAIBAApp:
     
     def init_session_state(self):
         """Initialize session state variables"""
-        if 'chat_history' not in st.session_state:
-            st.session_state.chat_history = []
-        if 'campaign_data' not in st.session_state:
-            st.session_state.campaign_data = None
-        if 'analysis_complete' not in st.session_state:
-            st.session_state.analysis_complete = False
+        defaults = {
+            'chat_history': [],
+            'campaign_data': None,
+            'analysis_complete': False
+        }
+        
+        for key, value in defaults.items():
+            if key not in st.session_state:
+                st.session_state[key] = value
     
     def render_header(self):
         """Render the main header"""
@@ -118,9 +130,7 @@ class GAIBAApp:
         """Render the sidebar navigation"""
         with st.sidebar:
             st.markdown("""
-            <div style="text-align: center; padding: 1rem 0;">
-                <h2 style="color: #667eea;">🎯 Navigation</h2>
-            </div>
+            <h2 style="color: #667eea; text-align: center;">🎯 Navigation</h2>
             """, unsafe_allow_html=True)
             
             selected = option_menu(
@@ -144,7 +154,7 @@ class GAIBAApp:
                 }
             )
             
-            # Quick stats in sidebar
+            # Quick stats
             if st.session_state.campaign_data is not None:
                 st.markdown("---")
                 st.markdown("### 📊 Quick Stats")
@@ -157,59 +167,99 @@ class GAIBAApp:
     
     def render_dashboard(self):
         """Render the main dashboard"""
-        self.ui_helper.render_metric_cards()
-        
         if st.session_state.campaign_data is not None:
-            st.markdown("## 📈 Campaign Performance Overview")
+            # Render metrics
+            data = st.session_state.campaign_data
+            col1, col2, col3, col4 = st.columns(4)
             
+            with col1:
+                st.markdown(f"""
+                <div class="metric-card">
+                    <h3 style="color: #667eea; margin: 0;">📊 Total Campaigns</h3>
+                    <p style="font-size: 2rem; font-weight: bold; margin: 10px 0; color: #e2e8f0;">{len(data)}</p>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col2:
+                total_spend = data['spend'].sum() if 'spend' in data.columns else 0
+                st.markdown(f"""
+                <div class="metric-card">
+                    <h3 style="color: #667eea; margin: 0;">💰 Total Spend</h3>
+                    <p style="font-size: 2rem; font-weight: bold; margin: 10px 0; color: #e2e8f0;">${total_spend:,.0f}</p>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col3:
+                avg_roi = data['roi'].mean() if 'roi' in data.columns else 0
+                st.markdown(f"""
+                <div class="metric-card">
+                    <h3 style="color: #667eea; margin: 0;">📈 Average ROI</h3>
+                    <p style="font-size: 2rem; font-weight: bold; margin: 10px 0; color: #10b981;">{avg_roi:.1f}%</p>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col4:
+                total_impressions = data['impressions'].sum() if 'impressions' in data.columns else 0
+                st.markdown(f"""
+                <div class="metric-card">
+                    <h3 style="color: #667eea; margin: 0;">👁️ Impressions</h3>
+                    <p style="font-size: 2rem; font-weight: bold; margin: 10px 0; color: #e2e8f0;">{total_impressions:,.0f}</p>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            # Charts
+            st.markdown("## 📈 Campaign Performance")
             col1, col2 = st.columns(2)
             
             with col1:
-                if 'roi' in st.session_state.campaign_data.columns:
-                    fig = px.line(st.session_state.campaign_data, y='roi', 
-                                title='ROI Trend', color_discrete_sequence=['#667eea'])
-                    fig.update_layout(plot_bgcolor='rgba(0,0,0,0)', 
-                                    paper_bgcolor='rgba(0,0,0,0)', font_color='white')
+                if 'roi' in data.columns:
+                    fig = px.line(data, y='roi', title='ROI Trend', color_discrete_sequence=['#667eea'])
+                    fig.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font_color='white')
                     st.plotly_chart(fig, use_container_width=True)
             
             with col2:
-                if 'engagement_rate' in st.session_state.campaign_data.columns:
-                    fig = px.bar(st.session_state.campaign_data.head(10), 
-                               y='engagement_rate', title='Top 10 Engagement Rates',
-                               color_discrete_sequence=['#764ba2'])
-                    fig.update_layout(plot_bgcolor='rgba(0,0,0,0)', 
-                                    paper_bgcolor='rgba(0,0,0,0)', font_color='white')
+                if 'channel' in data.columns:
+                    channel_counts = data['channel'].value_counts()
+                    fig = px.bar(x=channel_counts.index, y=channel_counts.values, 
+                               title='Campaigns by Channel', color_discrete_sequence=['#764ba2'])
+                    fig.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font_color='white')
                     st.plotly_chart(fig, use_container_width=True)
             
+            # Data table
             st.markdown("## 🗂️ Recent Campaigns")
-            st.dataframe(st.session_state.campaign_data.head(10), use_container_width=True)
+            st.dataframe(data.head(10), use_container_width=True)
         else:
-            self.render_welcome_message()
-    
-    def render_welcome_message(self):
-        """Render welcome message"""
-        st.markdown("""
-        <div class="upload-area">
-            <h2 style="color: #667eea;">Welcome to GAIBA Analytics!</h2>
-            <p style="color: #a0aec0; font-size: 1.1rem;">
-                Upload your marketing campaign data to unlock powerful analytics and AI insights.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
+            st.markdown("""
+            <div class="upload-area">
+                <h2 style="color: #667eea;">Welcome to GAIBA Analytics!</h2>
+                <p style="color: #a0aec0; font-size: 1.1rem;">
+                    Upload your marketing campaign data to unlock powerful analytics and AI insights.
+                </p>
+                <p style="color: #667eea;">👈 Start with <strong>Data Upload</strong> in the sidebar</p>
+            </div>
+            """, unsafe_allow_html=True)
     
     def render_data_upload(self):
         """Render data upload interface"""
         st.markdown("## 📤 Upload Campaign Data")
         
-        uploaded_file = st.file_uploader("Choose a CSV file", type=['csv'])
+        uploaded_file = st.file_uploader(
+            "Choose a CSV file", 
+            type=['csv'],
+            help="Upload your marketing campaign dataset in CSV format"
+        )
         
         if uploaded_file is not None:
             try:
                 data = self.data_loader.load_csv(uploaded_file)
                 st.session_state.campaign_data = data
                 st.success(f"✅ Successfully uploaded {len(data)} campaign records!")
+                
+                # Data preview
+                st.markdown("### 👀 Data Preview")
                 st.dataframe(data.head(), use_container_width=True)
                 
+                # Data info
                 col1, col2, col3 = st.columns(3)
                 with col1:
                     st.metric("Total Rows", len(data))
@@ -221,8 +271,9 @@ class GAIBAApp:
             except Exception as e:
                 st.error(f"❌ Error uploading file: {str(e)}")
         
+        # Sample data option
         st.markdown("---")
-        st.markdown("### 🎲 Or Try Sample Data")
+        st.markdown("### 🎲 Try Sample Data")
         if st.button("Load Sample Dataset", type="primary"):
             sample_data = self.data_loader.generate_sample_data()
             st.session_state.campaign_data = sample_data
@@ -232,7 +283,7 @@ class GAIBAApp:
     def render_analytics(self):
         """Render analytics dashboard"""
         if st.session_state.campaign_data is None:
-            st.warning("⚠️ Please upload campaign data first.")
+            st.warning("⚠️ Please upload campaign data first in the Data Upload section.")
             return
         
         data = st.session_state.campaign_data
@@ -256,29 +307,40 @@ class GAIBAApp:
         with tab2:
             if st.button("🔄 Run K-Means Clustering", type="primary"):
                 with st.spinner("Running clustering analysis..."):
-                    clusters = self.analyzer.perform_clustering(data)
-                    if clusters is not None:
-                        cluster_chart = self.analyzer.create_cluster_chart(data, clusters)
-                        st.plotly_chart(cluster_chart, use_container_width=True)
+                    try:
+                        clusters = self.analyzer.perform_clustering(data)
+                        if clusters is not None:
+                            st.success("✅ Clustering completed!")
+                            st.info(f"📊 Found {len(set(clusters))} clusters in your campaign data")
+                        else:
+                            st.warning("⚠️ Could not perform clustering - insufficient numeric data")
+                    except Exception as e:
+                        st.error(f"Error in clustering: {str(e)}")
         
         with tab3:
             if 'roi' in data.columns:
                 col1, col2 = st.columns(2)
                 with col1:
-                    roi_chart = self.analyzer.create_roi_distribution_chart(data)
-                    st.plotly_chart(roi_chart, use_container_width=True)
+                    st.markdown("#### 📊 ROI Distribution")
+                    fig = px.histogram(data, x='roi', title='ROI Distribution', 
+                                     color_discrete_sequence=['#667eea'])
+                    fig.update_layout(plot_bgcolor='rgba(0,0,0,0)', 
+                                    paper_bgcolor='rgba(0,0,0,0)', font_color='white')
+                    st.plotly_chart(fig, use_container_width=True)
+                
                 with col2:
                     st.markdown("#### 🏆 Top Performing Campaigns")
-                    top_campaigns = self.analyzer.get_top_campaigns(data, 'roi')
+                    top_campaigns = data.nlargest(5, 'roi')[['campaign_name', 'roi', 'spend']] if 'campaign_name' in data.columns else data.nlargest(5, 'roi')
                     st.dataframe(top_campaigns, use_container_width=True)
+            else:
+                st.info("📈 ROI column not found in your data. Please ensure your dataset includes ROI metrics.")
     
     def render_ai_chat(self):
         """Render AI chat interface"""
         st.markdown("## 🤖 AI Campaign Assistant")
         
         if not self.api_keys.get('groq_api_key'):
-            st.warning("⚠️ Groq API key not configured. Please add GROQ_API_KEY to Streamlit secrets.")
-            return
+            st.warning("⚠️ Groq API key not configured. Add GROQ_API_KEY to Streamlit secrets for AI features.")
         
         # Display chat history
         for i, (role, content) in enumerate(st.session_state.chat_history):
@@ -309,7 +371,7 @@ class GAIBAApp:
                 st.rerun()
         
         with col2:
-            if st.button("📊 Analyze Performance"):
+            if st.button("📊 Performance Analysis"):
                 response = self.optimizer.analyze_campaign_performance(st.session_state.campaign_data)
                 st.session_state.chat_history.append(("assistant", response))
                 st.rerun()
@@ -325,56 +387,75 @@ class GAIBAApp:
         st.markdown("## 📧 Email Campaign Management")
         
         if not self.api_keys.get('email'):
-            st.warning("⚠️ Email credentials not configured. Add EMAIL and EMAIL_PASSWORD to secrets.")
-            return
+            st.info("ℹ️ Configure email credentials in Streamlit secrets for full functionality.")
         
         tab1, tab2 = st.tabs(["✉️ Send Campaign", "📋 Campaign History"])
         
         with tab1:
             with st.form("email_campaign_form"):
-                col1, col2 = st.columns(2)
+                st.markdown("### Create Email Campaign")
                 
+                col1, col2 = st.columns(2)
                 with col1:
-                    campaign_name = st.text_input("Campaign Name")
-                    subject_line = st.text_input("Subject Line")
+                    campaign_name = st.text_input("Campaign Name*")
+                    subject_line = st.text_input("Subject Line*")
                 
                 with col2:
-                    recipient_list = st.text_area("Recipients (one email per line)")
                     campaign_type = st.selectbox("Campaign Type", ["Newsletter", "Promotional", "Transactional"])
+                    send_time = st.selectbox("Send Time", ["Send Now", "Schedule Later"])
                 
-                email_content = st.text_area("Email Content", height=200)
+                recipient_list = st.text_area("Recipients (one email per line)*", height=100)
+                email_content = st.text_area("Email Content*", height=200, 
+                                           placeholder="Enter your email content here...")
+                
                 submitted = st.form_submit_button("📤 Send Campaign", type="primary")
                 
-                if submitted and campaign_name and subject_line and email_content:
-                    success = self.email_manager.send_campaign(
-                        campaign_name, subject_line, email_content, recipient_list.split('\n')
-                    )
-                    if success:
-                        st.success("✅ Email campaign sent successfully!")
-                        st.balloons()
+                if submitted:
+                    if campaign_name and subject_line and email_content and recipient_list:
+                        recipients = [email.strip() for email in recipient_list.split('\n') if email.strip()]
+                        if recipients:
+                            success = self.email_manager.send_campaign(
+                                campaign_name, subject_line, email_content, recipients
+                            )
+                            if success:
+                                st.success("✅ Email campaign sent successfully!")
+                                st.balloons()
+                            else:
+                                st.error("❌ Failed to send email campaign")
+                        else:
+                            st.error("❌ Please provide at least one recipient email")
+                    else:
+                        st.error("❌ Please fill in all required fields marked with *")
         
         with tab2:
+            st.markdown("### 📋 Campaign History")
             history = self.email_manager.get_campaign_history()
             if not history.empty:
                 st.dataframe(history, use_container_width=True)
             else:
-                st.info("📭 No email campaigns sent yet.")
+                st.info("📭 No email campaigns sent yet. Create your first campaign!")
     
     def run(self):
         """Main application runner"""
-        self.render_header()
-        selected = self.render_sidebar()
-        
-        if selected == "Dashboard":
-            self.render_dashboard()
-        elif selected == "Data Upload":
-            self.render_data_upload()
-        elif selected == "Analytics":
-            self.render_analytics()
-        elif selected == "AI Chat":
-            self.render_ai_chat()
-        elif selected == "Email Campaigns":
-            self.render_email_campaigns()
+        try:
+            self.render_header()
+            selected = self.render_sidebar()
+            
+            # Route to selected page
+            if selected == "Dashboard":
+                self.render_dashboard()
+            elif selected == "Data Upload":
+                self.render_data_upload()
+            elif selected == "Analytics":
+                self.render_analytics()
+            elif selected == "AI Chat":
+                self.render_ai_chat()
+            elif selected == "Email Campaigns":
+                self.render_email_campaigns()
+                
+        except Exception as e:
+            st.error(f"Application error: {str(e)}")
+            st.info("Please refresh the page or check your data.")
 
 # Run the application
 if __name__ == "__main__":
